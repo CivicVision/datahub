@@ -19,7 +19,9 @@ class SpendingModelProvider(ModelProvider):
 
     def has_cube(self, name):
         dataset = Dataset.by_name(name)
-        return dataset is not None
+        if dataset is None:
+            return False
+        return dataset.model is not None
 
     def cube(self, name, locale=None, namespace=None):
         dataset = Dataset.by_name(name)
@@ -28,7 +30,7 @@ class SpendingModelProvider(ModelProvider):
 
         measures, dimensions, mappings = [], [], {}
         aggregates = [MeasureAggregate('fact_count',
-                                       label='Numer of entries',
+                                       label='Number of entries',
                                        function='count')]
 
         for measure in dataset.model.measures:
@@ -39,26 +41,40 @@ class SpendingModelProvider(ModelProvider):
                                          measure=measure.name,
                                          function='sum')
             aggregates.append(aggregate)
-            mappings[measure.name] = measure.column
+            mappings[measure.name] = measure.column_name
 
         for dimension in dataset.model.dimensions:
-            attributes = []
+            attributes, last_col = [], None
             for attr in dimension.attributes:
-                attributes.append(attr.name)
-                mappings[attr.path] = attr.column
+                attributes.append({
+                    'name': attr.name,
+                    'label': attr.label
+                })
+                mappings[attr.ref] = last_col = attr.column_name
+
+            # Workaround because the cubes mapper shortens references
+            # for single-attribute dimensions to just the dimension name.
+            if len(attributes) == 1:
+                mappings[dimension.name] = last_col
 
             meta = {
                 'label': dimension.label,
                 'name': dimension.name,
-                'cardinality': dimension.cardinality,
+                'cardinality': dimension.cardinality_class,
                 'levels': [{
                     'name': dimension.name,
                     'label': dimension.label,
-                    'cardinality': dimension.cardinality,
-                    # 'key': 'name',
+                    'cardinality': dimension.cardinality_class,
                     'attributes': attributes
                 }]
             }
+            if dimension.key_attribute:
+                meta['levels'][0]['key'] = dimension.key_attribute.name
+            if dimension.label_attribute:
+                meta['levels'][0]['label_attribute'] = \
+                    dimension.label_attribute.name
+                meta['levels'][0]['order_attribute'] = \
+                    dimension.label_attribute.name
             dimensions.append(Dimension.from_metadata(meta))
 
         cube = Cube(name=dataset.name,
@@ -80,7 +96,7 @@ class SpendingModelProvider(ModelProvider):
     def list_cubes(self):
         cubes = []
         for dataset in Dataset.all_by_account(None):
-            if not len(dataset.model.axes):
+            if dataset.model is None:
                 continue
             cubes.append({
                 'name': dataset.name,

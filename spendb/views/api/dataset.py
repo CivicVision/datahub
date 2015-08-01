@@ -6,16 +6,15 @@ from flask.ext.babel import gettext as _
 from colander import SchemaNode, String, Invalid
 from sqlalchemy.orm import aliased
 from apikit import jsonify, Pager, request_data
+from fiscalmodel import COUNTRIES, LANGUAGES
 
 from spendb.core import db
-from spendb.model import Dataset, DatasetLanguage, DatasetTerritory
+from spendb.model import Dataset, DatasetLanguage, DatasetTerritory, Account
 from spendb.auth import require
 from spendb.lib.helpers import get_dataset
-from spendb.views.cache import etag_cache_keygen
-from spendb.views.error import api_json_errors
+from spendb.views.context import etag_cache_keygen
 from spendb.validation.dataset import validate_dataset, validate_managers
 from spendb.validation.model import validate_model
-from spendb.reference import COUNTRIES, LANGUAGES
 
 
 log = logging.getLogger(__name__)
@@ -38,6 +37,12 @@ def query_index():
         q = q.join(t, Dataset._territories)
         q = q.filter(t.code == territory)
 
+    # Filter by account if one has been provided
+    for account in request.args.getlist('account'):
+        a = aliased(Account)
+        q = q.join(a, Dataset.managers)
+        q = q.filter(a.name == account)
+
     # Return a list of languages as dicts with code, count, url and label
     languages = [{'code': code, 'count': count, 'label': LANGUAGES.get(code)}
                  for (code, count) in DatasetLanguage.dataset_counts(q)]
@@ -50,7 +55,6 @@ def query_index():
 
 
 @blueprint.route('/datasets')
-@api_json_errors
 def index():
     pager, languages, territories = query_index()
     data = pager.to_dict()
@@ -60,15 +64,13 @@ def index():
 
 
 @blueprint.route('/datasets/<name>')
-@api_json_errors
 def view(name):
     dataset = get_dataset(name)
-    etag_cache_keygen(dataset)
+    etag_cache_keygen(dataset, private=dataset.private)
     return jsonify(dataset)
 
 
 @blueprint.route('/datasets', methods=['POST', 'PUT'])
-@api_json_errors
 def create():
     require.dataset.create()
     dataset = request_data()
@@ -84,55 +86,51 @@ def create():
 
 
 @blueprint.route('/datasets/<name>', methods=['POST', 'PUT'])
-@api_json_errors
 def update(name):
     dataset = get_dataset(name)
     require.dataset.update(dataset)
     dataset.update(validate_dataset(request_data()))
+    dataset.touch()
     db.session.commit()
     return view(name)
 
 
 @blueprint.route('/datasets/<name>/structure')
-@api_json_errors
 def structure(name):
     dataset = get_dataset(name)
-    etag_cache_keygen(dataset)
+    etag_cache_keygen(dataset, private=dataset.private)
     return jsonify({
-        'fields': dataset.fields,
-        'samples': dataset.samples
+        'fields': dataset.fields
     })
 
 
 @blueprint.route('/datasets/<name>/model')
-@api_json_errors
 def model(name):
     dataset = get_dataset(name)
-    etag_cache_keygen(dataset)
-    return jsonify(dataset.model_data)
+    etag_cache_keygen(dataset, private=dataset.private)
+    return jsonify(dataset.model or {})
 
 
 @blueprint.route('/datasets/<name>/model', methods=['POST', 'PUT'])
-@api_json_errors
 def update_model(name):
     dataset = get_dataset(name)
     require.dataset.update(dataset)
-    model_data = validate_model(request_data())
-    dataset.update_model(model_data)
+    data = request_data()
+    if isinstance(data, dict):
+        data['fact_table'] = dataset.fact_table.table_name
+    dataset.model = validate_model(data)
     db.session.commit()
     return model(name)
 
 
 @blueprint.route('/datasets/<name>/managers')
-@api_json_errors
 def managers(name):
     dataset = get_dataset(name)
-    etag_cache_keygen(dataset)
+    etag_cache_keygen(dataset, private=dataset.private)
     return jsonify({'managers': dataset.managers})
 
 
 @blueprint.route('/datasets/<name>/managers', methods=['POST', 'PUT'])
-@api_json_errors
 def update_managers(name):
     dataset = get_dataset(name)
     require.dataset.update(dataset)
@@ -140,16 +138,15 @@ def update_managers(name):
     if current_user not in data['managers']:
         data['managers'].append(current_user)
     dataset.managers = data['managers']
+    dataset.touch()
     db.session.commit()
     return managers(name)
 
 
 @blueprint.route('/datasets/<name>', methods=['DELETE'])
-@api_json_errors
 def delete(name):
     dataset = get_dataset(name)
     require.dataset.update(dataset)
-
     dataset.fact_table.drop()
     db.session.delete(dataset)
     db.session.commit()

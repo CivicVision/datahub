@@ -32,6 +32,15 @@ class TestDatasetApiController(ControllerTestCase):
         assert res.json.get('total') == 0, res.json
         assert len(res.json.get('results')) == 0, res.json
 
+    def test_list_datasets_by_account(self):
+        url = url_for('datasets_api.index')
+        res = self.client.get(url, query_string={'account': self.user.name})
+        assert res.json.get('total') == 1, res.json
+        res0 = res.json.get('results')[0]
+        assert res0.get('name') == self.cra.name, res0
+        res = self.client.get(url, query_string={'account': 'foo'})
+        assert res.json.get('total') == 0, res.json
+
     def test_view_dataset(self):
         url = url_for('datasets_api.view', name=self.cra.name)
         res = self.client.get(url)
@@ -64,9 +73,10 @@ class TestDatasetApiController(ControllerTestCase):
         res = self.client.get(url)
         fields = res.json.get('fields')
         assert '200' in res.status, res.status
-        assert 'cap_or_cur' in fields, res.json
-        assert 'cofog1_name' in fields, res.json
-        c1n = fields['cofog1_name']
+        by_name = {f['name']: f for f in fields}
+        assert 'cap_or_cur' in by_name, res.json
+        assert 'cofog1_name' in by_name, res.json
+        c1n = by_name['cofog1_name']
         assert c1n['title'] == 'cofog1.name', c1n
 
     def test_view_fields_empty(self):
@@ -185,13 +195,13 @@ class TestDatasetApiController(ControllerTestCase):
 
     def test_update_model(self):
         url = url_for('datasets_api.update_model', name='cra')
-        data = self.cra.model_data.copy()
+        data = self.cra.model.to_dict()
         del data['dimensions']['cofog3']
         res = self.client.post(url, data=json.dumps(data),
                                headers={'content-type': 'application/json'},
                                query_string={'api_key': self.user.api_key})
-        assert 'cofog3' not in res.json.get('dimensions', {}), res.json.keys()
-        assert 'cofog1' in res.json.get('dimensions', {}), res.json.keys()
+        assert 'cofog3' not in res.json.get('dimensions', {}), res.json
+        assert 'cofog1' in res.json.get('dimensions', {}), res.json
 
         res2 = self.client.get(url,
                                query_string={'api_key': self.user.api_key})
@@ -199,13 +209,13 @@ class TestDatasetApiController(ControllerTestCase):
 
     def test_update_model_invalid(self):
         url = url_for('datasets_api.update_model', name='cra')
-        data = self.cra.model_data.copy()
+        data = self.cra.model.to_dict()
         del data['dimensions']['cofog3']['attributes']
         res = self.client.post(url, data=json.dumps(data),
                                headers={'content-type': 'application/json'},
                                query_string={'api_key': self.user.api_key})
         assert '400' in res.status, res.status
-        assert 'cofog3.attributes' in res.data, res.data
+        assert "attributes' is a required" in res.data, res.data
 
     def test_update_model_invalid_json(self):
         url = url_for('datasets_api.update_model', name='cra')

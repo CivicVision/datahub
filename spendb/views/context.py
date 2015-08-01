@@ -1,21 +1,29 @@
-import os
-
-from flask import current_app, request
-from flask.ext.babel import get_locale
+from flask import current_app, request, session
 from flask.ext.login import current_user
+from babel import Locale
+from apikit import cache_hash
 
-from spendb import auth, __version__
-from spendb.core import url_for
-from spendb.validation.common import RESERVED_TERMS
-from spendb.views.i18n import get_available_locales
-from spendb.views.cache import setup_caching, cache_response
+from spendb import __version__
+from spendb.core import babel
+from spendb.views.error import NotModified
 from spendb.views.home import blueprint as home
+
+
+def get_locale():
+    if 'locale' in session:
+        return Locale.parse(session.get('locale'))
+    else:
+        requested = request.accept_languages.values()
+        requested = [l.replace('-', '_') for l in requested]
+        available = map(unicode, babel.list_translations())
+        return Locale.negotiate(available, requested)
 
 
 @home.before_app_request
 def before_request():
-    request._return_json = False
-    setup_caching()
+    current_app.cubes_workspace.flush_lookup_cache()
+    request._http_etag = None
+    request._http_private = False
 
 
 @home.after_app_request
@@ -26,50 +34,37 @@ def after_request(resp):
         # http://wiki.nginx.org/X-accel#X-Accel-Buffering
         resp.headers['X-Accel-Buffering'] = 'no'
 
-    return cache_response(resp)
+    # skip cache under these conditions:
+    if not current_app.config.get('CACHE') \
+            or request.method not in ['GET', 'HEAD', 'OPTIONS'] \
+            or resp.status_code > 399:
+        resp.cache_control.no_cache = True
+        return resp
+
+    if request.endpoint == 'static':
+        resp.cache_control.max_age = 3600 * 6
+        resp.cache_control.public = True
+
+    if request._http_etag:
+        if not request._http_private:
+            resp.cache_control.public = True
+        else:
+            resp.cache_control.private = True
+        resp.cache_control.max_age = 3600 * 6
+        resp.cache_control.must_revalidate = True
+        resp.set_etag(request._http_etag)
+
+    return resp
 
 
-def angular_templates(app):
-    """ Find all angular templates and make them available in a variable
-    which can be included in a Jinja template so that angular can load
-    templates without doing a server round trip. """
-    partials_dir = os.path.join(app.static_folder, 'templates')
-    for (root, dirs, files) in os.walk(partials_dir):
-        for file_name in files:
-            file_path = os.path.join(root, file_name)
-            with open(file_path, 'rb') as fh:
-                file_name = file_path[len(partials_dir) + 1:]
-                yield (file_name, fh.read().decode('utf-8'))
+def etag_cache_keygen(key_obj, private=False):
+    request._http_private = private
 
+    args = sorted(set(request.args.items()))
+    # jquery where is your god now?!?
+    args = filter(lambda (k, v): k != '_', args)
 
-def languages():
-    current_locale = get_locale()
-
-    def details(locale):
-        return {
-            "lang_code": locale.language,
-            "lang_name": locale.language_name,
-            "current_locale": locale == current_locale
-        }
-    return [details(l) for l in get_available_locales()]
-
-
-@home.app_context_processor
-def template_context_processor():
-    locale = get_locale()
-    data = {
-        'DEBUG': current_app.config.get('DEBUG'),
-        'current_language': locale.language,
-        'current_locale': get_locale(),
-        'reserved_terms': RESERVED_TERMS,
-        'url_for': url_for,
-        'site_url': url_for('home.index').rstrip('/'),
-        'number_symbols_group': locale.number_symbols.get('group'),
-        'number_symbols_decimal': locale.number_symbols.get('decimal'),
-        'site_title': current_app.config.get('SITE_TITLE'),
-        'languages': languages(),
-        'logged_in': auth.account.logged_in(),
-        'current_user': current_user,
-        'can': auth
-    }
-    return data
+    request._http_etag = cache_hash(args, current_user,
+                                    key_obj, get_locale())
+    if request.if_none_match == request._http_etag:
+        raise NotModified()

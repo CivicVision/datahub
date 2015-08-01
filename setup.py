@@ -40,7 +40,7 @@ setup(
     description='SpenDB',
     author='Friedrich Lindenberg (formerly OKFN)',
     author_email='friedrich@pudo.org',
-    url='http://github.com/pudo/spendb',
+    url='http://github.com/spendb/spendb',
     install_requires=[],
     setup_requires=[],
     packages=filter(package_filter, find_packages()),
@@ -48,8 +48,7 @@ setup(
     package_data={
         'spendb': (
             files_in_pkgdir('spendb', 'static') +
-            files_in_pkgdir('spendb', 'templates') +
-            files_in_pkgdir('spendb', 'reference/data')
+            files_in_pkgdir('spendb', 'templates')
         )
     },
     test_suite='nose.collector',
@@ -68,7 +67,6 @@ setup(
     message_extractors={
         'spendb': [('**.py', 'python', None),
                    ('templates/**.html', 'jinja2', None),
-                   ('static/**', 'ignore', None),
-                   ]
+                   ('static/**', 'ignore', None)]
     },
 )

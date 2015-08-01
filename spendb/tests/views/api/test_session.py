@@ -2,7 +2,6 @@ import json
 from flask import url_for
 
 from spendb.core import db
-from spendb.model import Dataset
 from spendb.tests.base import ControllerTestCase
 from spendb.tests.helpers import load_fixture, make_account
 
@@ -23,8 +22,52 @@ class TestSessionApiController(ControllerTestCase):
         assert res.json.get('logged_in') is False, res.json
         assert res.json.get('user') is None, res.json
 
+    def test_authz_anon(self):
+        url = url_for('sessions_api.authz')
+        res = self.client.get(url, query_string={'dataset': self.cra.name})
+        assert res.json.get('read') is True, res.json
+        assert res.json.get('update') is False, res.json
+
+    def test_authz_user(self):
+        url = url_for('sessions_api.authz')
+        qs = dict(self.auth_qs)
+        qs['dataset'] = self.cra.name
+        res = self.client.get(url, query_string=qs)
+        assert res.json.get('read') is True, res.json
+        assert res.json.get('update') is True, res.json
+
+    def test_authz_other_user(self):
+        url = url_for('sessions_api.authz')
+        user = make_account('foo')
+        qs = {'api_key': user.api_key}
+        qs['dataset'] = self.cra.name
+        res = self.client.get(url, query_string=qs)
+        assert res.json.get('read') is True, res.json
+        assert res.json.get('update') is False, res.json
+
     def test_logged_in(self):
         url = url_for('sessions_api.session')
         res = self.client.get(url, query_string=self.auth_qs)
         assert res.json.get('logged_in') is True, res.json
         assert res.json.get('user') is not None, res.json
+
+    def test_logout(self):
+        url = url_for('sessions_api.logout')
+        res = self.client.post(url, query_string=self.auth_qs)
+        assert res.json.get('status') == 'ok', res.json
+
+    def test_login_ok(self):
+        url = url_for('sessions_api.login')
+        cred = {'login': 'test', 'password': 'password'}
+        res = self.client.post(url, data=json.dumps(cred),
+                               headers={'content-type': 'application/json'})
+        assert res.json.get('status') == 'ok', res.json
+        assert res.status_code == 200, res.json
+
+    def test_login_fail(self):
+        url = url_for('sessions_api.login')
+        cred = {'login': 'test', 'password': 'wrong'}
+        res = self.client.post(url, data=json.dumps(cred),
+                               headers={'content-type': 'application/json'})
+        assert res.json.get('status') == 'error', res.json
+        assert res.status_code == 400, res.json

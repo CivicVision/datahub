@@ -1,10 +1,11 @@
 import urllib
 import os
+import uuid
 import json
-import csv
 import urlparse
 from StringIO import StringIO
 from datetime import datetime
+from werkzeug.security import generate_password_hash
 
 from spendb.model.dataset import Dataset
 from spendb.core import db
@@ -26,6 +27,8 @@ def validation_fixture(name):
     model_fp = fixture_file('validation/' + name + '.json')
     model = json.load(model_fp)
     model_fp.close()
+    if 'fact_table' not in model['model']:
+        model['model']['fact_table'] = 'table'
     return model
 
 
@@ -63,23 +66,14 @@ def csvimport_fixture_file(name, path):
 
 
 def csvimport_table(name):
-    from messytables import CSVTableSet, type_guess
-    from messytables import types_processor, headers_guess
-    from messytables import headers_processor, offset_processor
-    from spendb.etl.extract import parse_table
+    from spendb.core import data_manager
+    from spendb.etl.extract import validate_table, load_table
 
-    row_set = CSVTableSet(data_fixture(name)).tables[0]
-    offset, headers = headers_guess(row_set.sample)
-    row_set.register_processor(headers_processor(headers))
-    row_set.register_processor(offset_processor(offset + 1))
-    types = type_guess(row_set.sample, strict=True)
-    row_set.register_processor(types_processor(types))
-
-    rows = []
-    for num_rows, (fields, row, samples) in enumerate(parse_table(row_set)):
-        rows.append(row)
-
-    return fields, rows
+    package = data_manager.package(uuid.uuid4().hex)
+    source = package.ingest(data_fixture(name))
+    source = validate_table(source)
+    rows = list(load_table(source))
+    return source.meta.get('fields'), rows
 
 
 def load_fixture(name, manager=None):
@@ -100,7 +94,7 @@ def load_fixture(name, manager=None):
 
 def make_account(name='test', fullname='Test User',
                  email='test@example.com', twitter='testuser',
-                 admin=False):
+                 admin=False, password='password'):
     from spendb.model.account import Account
 
     # First see if the account already exists and if so, return it
@@ -115,6 +109,7 @@ def make_account(name='test', fullname='Test User',
     account.email = email
     account.twitter_handle = twitter
     account.admin = admin
+    account.password = generate_password_hash(password)
     db.session.add(account)
     db.session.commit()
     return account

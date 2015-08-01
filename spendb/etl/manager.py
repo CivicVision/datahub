@@ -27,13 +27,14 @@ class DataManager(object):
 
     @property
     def collection(self):
-        if self.configured:
-            if self._coll is None:
-                env = self.app.config
-                args = {
-                    'aws_key_id': env.get('AWS_KEY_ID'),
-                    'aws_secret': env.get('AWS_SECRET'),
-                    'bucket_name': env.get('AWS_DATA_BUCKET')
-                }
-                self._coll = open_collection('datasets', 's3', **args)
-            return self._coll
+        if not self.configured:
+            return
+        if self._coll is None:
+            env = self.app.config
+            args = {
+                'aws_key_id': env.get('AWS_KEY_ID'),
+                'aws_secret': env.get('AWS_SECRET'),
+                'bucket_name': env.get('AWS_DATA_BUCKET')
+            }
+            self._coll = open_collection('datasets', 's3', **args)
+        return self._coll

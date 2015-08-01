@@ -1,20 +1,19 @@
 from cubes.server import slicer
 from colander import Invalid
+from jsonschema import ValidationError
+from babbage import api as babbage_api
 
-from spendb.lib import filters
-
-from spendb.views.context import home
-from spendb.views.cache import NotModified, handle_not_modified
-from spendb.views.i18n import get_locale
-
-from spendb.views.account import blueprint as account
-from spendb.views.dataset import blueprint as dataset
+from spendb.model.manager import SpendingCubeManager
+from spendb.views.context import home, get_locale
+from spendb.views.error import NotModified, handle_not_modified
 from spendb.views.error import handle_error, handle_invalid
+from spendb.views.error import handle_validation_error
 from spendb.views.api.dataset import blueprint as datasets_api
 from spendb.views.api.meta import blueprint as meta_api
 from spendb.views.api.session import blueprint as session_api
 from spendb.views.api.source import blueprint as source_api
 from spendb.views.api.run import blueprint as run_api
+from spendb.views.api.account import blueprint as account_api
 
 
 def register_views(app, babel):
@@ -25,13 +24,16 @@ def register_views(app, babel):
     app.register_blueprint(run_api, url_prefix='/api/3')
     app.register_blueprint(source_api, url_prefix='/api/3')
     app.register_blueprint(datasets_api, url_prefix='/api/3')
+    app.register_blueprint(account_api, url_prefix='/api/3')
+
+    # expose ``babbage``:
+    babbage_api.configure_api(app, SpendingCubeManager())
+    app.register_blueprint(babbage_api.blueprint, url_prefix='/api/babbage')
 
     # expose ``cubes``:
     app.register_blueprint(slicer, url_prefix='/api/slicer', config={})
 
     app.register_blueprint(home)
-    app.register_blueprint(account)
-    app.register_blueprint(dataset)
 
     app.error_handler_spec[None][400] = handle_error
     app.error_handler_spec[None][401] = handle_error
@@ -42,13 +44,7 @@ def register_views(app, babel):
 
     custom = (
         (Invalid, handle_invalid),
+        (ValidationError, handle_validation_error),
         (NotModified, handle_not_modified)
     )
     app.error_handler_spec[None][None] = custom
-
-    app.jinja_env.filters.update({
-        'markdown_preview': filters.markdown_preview,
-        'markdown': filters.markdown,
-        'format_date': filters.format_date,
-        'readable_url': filters.readable_url
-    })

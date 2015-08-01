@@ -1,39 +1,63 @@
-from flask import Blueprint, render_template, request, redirect, flash
+import os
+from hashlib import sha1
+from StringIO import StringIO
+
+from flask import Blueprint, render_template, request, redirect
+from flask import Response, current_app, session
+from webhelpers.feedgenerator import Rss201rev2Feed
 from flask.ext.babel import gettext
 from apikit import jsonify
 
-from spendb.core import pages
-from spendb.views.i18n import set_session_locale
-from spendb.views.api.dataset import query_index
-from spendb.views.cache import disable_cache, etag_cache_keygen
+from spendb.core import db, url_for
+from spendb import auth, __version__
+from spendb.model import Dataset
+from spendb.validation.common import RESERVED_TERMS
 
 
 blueprint = Blueprint('home', __name__)
 
 
+def asset_link(path):
+    asset_path = current_app.config['ASSETS_PATH_PROD']
+    if current_app.config['DEBUG']:
+        asset_path = current_app.config['ASSETS_PATH_DEBUG']
+    cache_key = os.environ.get('CACHE_KEY', __version__)
+    cache_key = sha1(cache_key).hexdigest()[:10]
+    return '%s%s?_=%s' % (asset_path, path, cache_key)
+
+
+@blueprint.route('/login')
+@blueprint.route('/settings')
+@blueprint.route('/accounts/<account>')
+@blueprint.route('/docs/<path:page>')
+@blueprint.route('/datasets')
+@blueprint.route('/datasets/<path:path>')
 @blueprint.route('/')
-def index():
-    page = pages.get_or_404('index')
-    pager, _, territories = query_index()
-    etag_cache_keygen(pager.cache_keys())
-    return render_template('home/index.html', pager=pager,
-                           territories=territories, page=page)
+def index(*a, **kw):
+    from flask.ext.babel import get_locale
+    from spendb.views.context import etag_cache_keygen
+    etag_cache_keygen(RESERVED_TERMS)
+    locale = get_locale()
+    data = {
+        'current_language': locale.language,
+        'url_for': url_for,
+        'debug': current_app.config['DEBUG'],
+        'asset_link': asset_link,
+        'reserved_terms': RESERVED_TERMS,
+        'site_url': url_for('home.index').rstrip('/'),
+        'site_title': current_app.config.get('SITE_TITLE')
+    }
+    return render_template('layout.html', **data)
 
 
 @blueprint.route('/set-locale', methods=['POST'])
 def set_locale():
-    disable_cache()
     locale = request.json.get('locale')
 
     if locale is not None:
-        set_session_locale(locale)
+        session['locale'] = locale
+        session.modified = True
     return jsonify({'locale': locale})
-
-
-@blueprint.route('/__version__')
-def version():
-    from spendb import __version__
-    return __version__
 
 
 @blueprint.route('/favicon.ico')
@@ -43,16 +67,37 @@ def favicon():
 
 @blueprint.route('/__ping__')
 def ping():
-    disable_cache()
     from spendb.tasks import ping
     ping.delay()
-    flash(gettext("Sent ping!"), 'success')
-    return redirect('/')
+    return jsonify({
+        'status': 'ok',
+        'message': gettext("Sent ping!")
+    })
 
 
-@blueprint.route('/docs/<path:path>.html')
-def page(path):
-    page = pages.get_or_404(path)
-    menu = [p for p in pages if not p['hidden']]
-    template = page.meta.get('template', 'home/page.html')
-    return render_template(template, page=page, pages=menu)
+@blueprint.route('/datasets.rss')
+def feed_rss():
+    q = db.session.query(Dataset)
+    if not auth.account.is_admin():
+        q = q.filter_by(private=False)
+    feed_items = q.order_by(Dataset.created_at.desc()).limit(20)
+    items = []
+    for feed_item in feed_items:
+        items.append({
+            'title': feed_item.label,
+            'pubdate': feed_item.updated_at,
+            'link': '/datasets/%s' % feed_item.name,
+            'description': feed_item.description,
+            'author_name': ', '.join([person.fullname for person in
+                                      feed_item.managers if
+                                      person.fullname]),
+        })
+    desc = gettext('Recently created datasets on %(site_title)s',
+                   site_title=current_app.config.get('SITE_TITLE'))
+    feed = Rss201rev2Feed(gettext('Recently Created Datasets'),
+                          url_for('home.index'), desc)
+    for item in items:
+        feed.add_item(**item)
+    sio = StringIO()
+    feed.write(sio, 'utf-8')
+    return Response(sio.getvalue(), mimetype='application/xml')

@@ -1,10 +1,12 @@
 import os
-from kombu import Exchange, Queue
 
 SECRET_KEY = 'foo'
 DEBUG = True
 
 SITE_TITLE = 'SpenDB'
+
+ASSETS_PATH_PROD = 'https://dfmbkaoi4kurm.cloudfront.net/libs/spendb.ui/latest/build'
+ASSETS_PATH_DEBUG = '/static/spendb.ui/build'
 
 SQLALCHEMY_DATABASE_URI = 'postgresql://localhost/spendb'
 
@@ -20,6 +22,8 @@ MAIL_DEFAULT_SENDER = 'noreply@mapthemoney.org'
 
 CACHE = False
 CACHE_TYPE = 'simple'
+
+PREFERRED_URL_SCHEME = 'http'
 
 ALEMBIC_DIR = os.path.join(os.path.dirname(__file__), 'migrate')
 ALEMBIC_DIR = os.path.abspath(ALEMBIC_DIR)

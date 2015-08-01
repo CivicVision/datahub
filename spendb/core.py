@@ -4,14 +4,11 @@ from flask import url_for as _url_for
 from flask.ext.sqlalchemy import SQLAlchemy
 from flask.ext.login import LoginManager
 from flask.ext.babel import Babel
-from flaskext.gravatar import Gravatar
 from flask.ext.cache import Cache
 from flask.ext.mail import Mail
-from flask.ext.assets import Environment
 from flask.ext.migrate import Migrate
 from flask.ext.cors import CORS
 from flask_flatpages import FlatPages
-import formencode_jinja2
 from celery import Celery
 from cubes import Workspace, ext
 
@@ -32,7 +29,6 @@ babel = Babel()
 login_manager = LoginManager()
 cache = Cache()
 mail = Mail()
-assets = Environment()
 migrate = Migrate()
 pages = FlatPages()
 data_manager = DataManager()
@@ -45,16 +41,10 @@ def create_app(**config):
     app.config.from_envvar('SPENDB_SETTINGS', silent=True)
     app.config.update(config)
 
-    app.jinja_options['extensions'].extend([
-        formencode_jinja2.formfill,
-        'jinja2.ext.i18n'
-    ])
-
     db.init_app(app)
     babel.init_app(app)
     cache.init_app(app)
     mail.init_app(app)
-    assets.init_app(app)
     login_manager.init_app(app)
     data_manager.init_app(app)
     pages.init_app(app)
@@ -75,10 +65,6 @@ def create_web_app(**config):
 
     from spendb.views import register_views
     register_views(app, babel)
-
-    Gravatar(app, size=200, rating='g',
-             default='retro', use_ssl=True)
-
     return app
 
 
